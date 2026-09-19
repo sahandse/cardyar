@@ -3,7 +3,7 @@
  * Plugin Name: کارت‌یار
  * Plugin URI: https://github.com/sahandse/cardyar
  * Description: افزونه پرداخت کارت‌به‌کارت برای وردپرس و ووکامرس با ثبت رسید، شماره مرجع، مدیریت وضعیت و رابط کاربری فارسی.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: Sahand Rezvan
  * Author URI: https://github.com/sahandse
  * Text Domain: cardyar
@@ -14,7 +14,7 @@
 defined('ABSPATH') || exit;
 
 final class Cardyar_Plugin {
-    const VERSION = '1.1.0';
+    const VERSION = '1.2.0';
     const OPTION  = 'cardyar_settings';
     const CPT     = 'cardyar_payment';
 
@@ -29,6 +29,7 @@ final class Cardyar_Plugin {
         add_filter('manage_'.self::CPT.'_posts_columns', [$this, 'columns']);
         add_action('manage_'.self::CPT.'_posts_custom_column', [$this, 'column_content'], 10, 2);
         add_action('admin_post_cardyar_status', [$this, 'change_status']);
+        add_action('plugins_loaded', [$this, 'woocommerce_boot'], 30);
     }
 
     public function defaults() {
@@ -106,6 +107,82 @@ final class Cardyar_Plugin {
     public function admin_assets($hook) {
         if (false === strpos($hook, 'cardyar')) return;
         wp_enqueue_style('cardyar-admin', plugin_dir_url(__FILE__) . 'assets/admin.css', [], self::VERSION);
+    }
+
+    public function woocommerce_boot() {
+        if (!class_exists('WooCommerce') || !class_exists('WC_Payment_Gateway')) return;
+
+        if (!class_exists('Cardyar_WC_Gateway')) {
+            class Cardyar_WC_Gateway extends WC_Payment_Gateway {
+                public function __construct() {
+                    $this->id='cardyar';
+                    $this->method_title='کارت‌به‌کارت';
+                    $this->method_description='ثبت سفارش و دریافت رسید کارت‌به‌کارت با کارت‌یار.';
+                    $this->has_fields=false;
+                    $this->supports=['products'];
+                    $this->title='کارت‌به‌کارت';
+                    $this->description='پس از ثبت سفارش، اطلاعات کارت و فرم بارگذاری رسید نمایش داده می‌شود.';
+                    $this->enabled='yes';
+                }
+                public function process_payment($order_id) {
+                    $order=wc_get_order($order_id);
+                    if(!$order) return ['result'=>'failure'];
+                    $order->update_status('on-hold','در انتظار دریافت/بررسی رسید کارت‌یار');
+                    wc_reduce_stock_levels($order_id);
+                    WC()->cart->empty_cart();
+                    return ['result'=>'success','redirect'=>$this->get_return_url($order)];
+                }
+            }
+        }
+
+        add_filter('woocommerce_payment_gateways', function($gateways){
+            $gateways[]='Cardyar_WC_Gateway';
+            return $gateways;
+        });
+        add_action('woocommerce_thankyou_cardyar', [$this,'thankyou_receipt_form']);
+        add_action('woocommerce_order_details_after_order_table', [$this,'order_receipt_status']);
+        add_action('woocommerce_admin_order_data_after_billing_address', [$this,'admin_order_receipt']);
+    }
+
+    public function thankyou_receipt_form($order_id) {
+        $order=wc_get_order($order_id);
+        if(!$order) return;
+        $this->render_receipt_form($order);
+    }
+
+    public function order_receipt_status($order) {
+        if(!$order instanceof WC_Order || 'cardyar'!==$order->get_payment_method()) return;
+        $status=$order->get_meta('_cardyar_status');
+        if($status){
+            $labels=['pending'=>'در انتظار بررسی','approved'=>'تأیید شده','rejected'=>'رد شده'];
+            echo '<p class="cardyar-order-status"><strong>وضعیت رسید کارت‌یار:</strong> '.esc_html($labels[$status]??$status).'</p>';
+        }
+    }
+
+    public function admin_order_receipt($order) {
+        if(!$order instanceof WC_Order || 'cardyar'!==$order->get_payment_method()) return;
+        $ref=$order->get_meta('_cardyar_ref');
+        $receipt=(int)$order->get_meta('_cardyar_receipt_id');
+        $status=$order->get_meta('_cardyar_status')?:'pending';
+        echo '<div class="cardyar-admin-order"><p><strong>کارت‌یار</strong></p><p>شماره مرجع: '.esc_html($ref?:'—').'</p><p>وضعیت: '.esc_html($status).'</p>';
+        if($receipt) echo wp_get_attachment_image($receipt,[120,120]);
+        echo '</div>';
+    }
+
+    private function render_receipt_form($order) {
+        $s=$this->settings();
+        if($order->get_meta('_cardyar_receipt_id')){
+            echo '<div class="cardyar-box"><strong>رسید شما ثبت شده و در انتظار بررسی است.</strong></div>';
+            return;
+        }
+        echo '<div class="cardyar-box"><h3>اطلاعات پرداخت کارت‌به‌کارت</h3>';
+        if($s['bank_name']) echo '<p><strong>بانک:</strong> '.esc_html($s['bank_name']).'</p>';
+        if($s['card_holder']) echo '<p><strong>به نام:</strong> '.esc_html($s['card_holder']).'</p>';
+        if($s['card_number']) echo '<p class="cardyar-number">'.esc_html(chunk_split($s['card_number'],4,' ')).'</p>';
+        echo '<form method="post" enctype="multipart/form-data" action="'.esc_url(admin_url('admin-post.php')).'">';
+        echo '<input type="hidden" name="action" value="cardyar_submit"><input type="hidden" name="order_id" value="'.esc_attr($order->get_id()).'"><input type="hidden" name="order_key" value="'.esc_attr($order->get_order_key()).'">';
+        wp_nonce_field('cardyar_submit','cardyar_nonce');
+        echo '<label>شماره مرجع<input type="text" name="reference" required></label><label>تصویر رسید<input type="file" name="receipt" accept="image/*" required></label><button type="submit">ثبت رسید سفارش</button></form></div>';
     }
 
     public function settings_page() {
@@ -204,17 +281,33 @@ final class Cardyar_Plugin {
         $status=sanitize_key($_GET['status']??'');
         if(!in_array($status,['approved','rejected'],true)) wp_die('وضعیت نامعتبر');
         update_post_meta($id,'_cardyar_status',$status);
+        $order_id=(int)get_post_meta($id,'_cardyar_order_id',true);
+        if($order_id&&function_exists('wc_get_order')){
+            $order=wc_get_order($order_id);
+            if($order){
+                $order->update_meta_data('_cardyar_status',$status);
+                if('approved'===$status && $order->has_status('on-hold')) $order->update_status('processing','رسید کارت‌یار تأیید شد.');
+                if('rejected'===$status) $order->add_order_note('رسید کارت‌یار رد شد.');
+                $order->save();
+            }
+        }
         wp_safe_redirect(admin_url('edit.php?post_type='.self::CPT)); exit;
     }
 
     public function submit_payment() {
         if(!isset($_POST['cardyar_nonce'])||!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['cardyar_nonce'])),'cardyar_submit')) wp_die('درخواست نامعتبر');
         $s=$this->settings();
-        $name=sanitize_text_field(wp_unslash($_POST['name']??''));
-        $phone=preg_replace('/[^0-9+]/','',wp_unslash($_POST['phone']??''));
+        $order_id=absint($_POST['order_id']??0);
+        $order=$order_id&&function_exists('wc_get_order')?wc_get_order($order_id):null;
+        $name=sanitize_text_field(wp_unslash($_POST['name']??($order?$order->get_formatted_billing_full_name():'')));
+        $phone=preg_replace('/[^0-9+]/','',wp_unslash($_POST['phone']??($order?$order->get_billing_phone():'')));
         $ref=sanitize_text_field(wp_unslash($_POST['reference']??''));
-        $amount=(float)str_replace([',',' '],'',sanitize_text_field(wp_unslash($_POST['amount']??'')));
-        if(!$name||!$phone||!$ref||$amount<=0) wp_die('اطلاعات ناقص است');
+        $amount=$order?(float)$order->get_total():(float)str_replace([',',' '],'',sanitize_text_field(wp_unslash($_POST['amount']??'')));
+        if($order){
+            $key=sanitize_text_field(wp_unslash($_POST['order_key']??''));
+            if(!hash_equals((string)$order->get_order_key(),(string)$key)) wp_die('کلید سفارش معتبر نیست.');
+        }
+        if(!$name||!$ref||$amount<=0) wp_die('اطلاعات ناقص است');
 
         $dup=get_posts(['post_type'=>self::CPT,'post_status'=>'any','numberposts'=>1,'meta_key'=>'_cardyar_ref','meta_value'=>$ref]);
         if($dup) wp_die('این شماره مرجع قبلاً ثبت شده است.');
@@ -236,8 +329,16 @@ final class Cardyar_Plugin {
         update_post_meta($id,'_cardyar_name',$name); update_post_meta($id,'_cardyar_phone',$phone);
         update_post_meta($id,'_cardyar_ref',$ref); update_post_meta($id,'_cardyar_amount',$amount);
         update_post_meta($id,'_cardyar_receipt_id',$attachment_id); update_post_meta($id,'_cardyar_status','pending');
+        if($order){
+            update_post_meta($id,'_cardyar_order_id',$order->get_id());
+            $order->update_meta_data('_cardyar_ref',$ref);
+            $order->update_meta_data('_cardyar_receipt_id',$attachment_id);
+            $order->update_meta_data('_cardyar_status','pending');
+            $order->add_order_note('رسید کارت‌به‌کارت با شماره مرجع '.$ref.' ثبت شد.');
+            $order->save();
+        }
 
-        wp_safe_redirect(add_query_arg('cardyar_success','1',wp_get_referer()?:home_url('/'))); exit;
+        wp_safe_redirect($order ? $order->get_view_order_url() : add_query_arg('cardyar_success','1',wp_get_referer()?:home_url('/'))); exit;
     }
 
     public function shortcode() {
