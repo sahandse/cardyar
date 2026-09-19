@@ -289,6 +289,19 @@ final class Cardyar_Plugin {
                 if('approved'===$status && $order->has_status('on-hold')) $order->update_status('processing','رسید کارت‌یار تأیید شد.');
                 if('rejected'===$status) $order->add_order_note('رسید کارت‌یار رد شد.');
                 $order->save();
+                $phone=$order->get_billing_phone();
+                if($phone){
+                    $text='approved'===$status
+                        ? 'رسید پرداخت سفارش #'.$order_id.' تأیید شد.'
+                        : 'رسید پرداخت سفارش #'.$order_id.' رد شد. لطفاً اطلاعات پرداخت را بررسی کنید.';
+                    apply_filters('s_store_sms_send',null,$phone,$text,'cardyar');
+                }
+            }
+        } else {
+            $phone=get_post_meta($id,'_cardyar_phone',true);
+            if($phone){
+                $text='approved'===$status?'رسید کارت‌به‌کارت شما تأیید شد.':'رسید کارت‌به‌کارت شما رد شد.';
+                apply_filters('s_store_sms_send',null,$phone,$text,'cardyar');
             }
         }
         wp_safe_redirect(admin_url('edit.php?post_type='.self::CPT)); exit;
