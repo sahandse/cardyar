@@ -3,7 +3,7 @@
  * Plugin Name: کارت‌یار
  * Plugin URI: https://github.com/sahandse/cardyar
  * Description: افزونه پرداخت کارت‌به‌کارت برای وردپرس و ووکامرس با ثبت رسید، شماره مرجع، مدیریت وضعیت و رابط کاربری فارسی.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: Sahand Rezvan
  * Author URI: https://github.com/sahandse
  * Text Domain: cardyar
@@ -14,7 +14,7 @@
 defined('ABSPATH') || exit;
 
 final class Cardyar_Plugin {
-    const VERSION = '1.0.0';
+    const VERSION = '1.0.1';
     const OPTION  = 'cardyar_settings';
     const CPT     = 'cardyar_payment';
 
@@ -72,6 +72,11 @@ final class Cardyar_Plugin {
     }
 
     public function admin_menu() {
+        if (function_exists('s_store_register_submenu')) {
+            s_store_register_submenu('cardyar', 'کارت‌یار', [$this, 'settings_page'], 'manage_options', 'کارت‌یار');
+        add_submenu_page('s-store','پرداخت‌های کارت‌یار','↳ پرداخت‌های کارت‌یار','manage_options','edit.php?post_type=' . self::CPT);
+            return;
+        }
         add_menu_page(
             'کارت‌یار',
             'کارت‌یار',
