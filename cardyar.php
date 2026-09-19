@@ -29,7 +29,6 @@ final class Cardyar_Plugin {
         add_filter('manage_'.self::CPT.'_posts_columns', [$this, 'columns']);
         add_action('manage_'.self::CPT.'_posts_custom_column', [$this, 'column_content'], 10, 2);
         add_action('admin_post_cardyar_status', [$this, 'change_status']);
-        add_action('plugins_loaded', [$this, 'woocommerce_boot'], 30);
     }
 
     public function defaults() {
@@ -109,40 +108,6 @@ final class Cardyar_Plugin {
         wp_enqueue_style('cardyar-admin', plugin_dir_url(__FILE__) . 'assets/admin.css', [], self::VERSION);
     }
 
-    public function woocommerce_boot() {
-        if (!class_exists('WooCommerce') || !class_exists('WC_Payment_Gateway')) return;
-
-        if (!class_exists('Cardyar_WC_Gateway')) {
-            class Cardyar_WC_Gateway extends WC_Payment_Gateway {
-                public function __construct() {
-                    $this->id='cardyar';
-                    $this->method_title='کارت‌به‌کارت';
-                    $this->method_description='ثبت سفارش و دریافت رسید کارت‌به‌کارت با کارت‌یار.';
-                    $this->has_fields=false;
-                    $this->supports=['products'];
-                    $this->title='کارت‌به‌کارت';
-                    $this->description='پس از ثبت سفارش، اطلاعات کارت و فرم بارگذاری رسید نمایش داده می‌شود.';
-                    $this->enabled='yes';
-                }
-                public function process_payment($order_id) {
-                    $order=wc_get_order($order_id);
-                    if(!$order) return ['result'=>'failure'];
-                    $order->update_status('on-hold','در انتظار دریافت/بررسی رسید کارت‌یار');
-                    wc_reduce_stock_levels($order_id);
-                    WC()->cart->empty_cart();
-                    return ['result'=>'success','redirect'=>$this->get_return_url($order)];
-                }
-            }
-        }
-
-        add_filter('woocommerce_payment_gateways', function($gateways){
-            $gateways[]='Cardyar_WC_Gateway';
-            return $gateways;
-        });
-        add_action('woocommerce_thankyou_cardyar', [$this,'thankyou_receipt_form']);
-        add_action('woocommerce_order_details_after_order_table', [$this,'order_receipt_status']);
-        add_action('woocommerce_admin_order_data_after_billing_address', [$this,'admin_order_receipt']);
-    }
 
     public function thankyou_receipt_form($order_id) {
         $order=wc_get_order($order_id);
@@ -378,4 +343,41 @@ final class Cardyar_Plugin {
 
 }
 
-new Cardyar_Plugin();
+$GLOBALS['cardyar_plugin_instance'] = new Cardyar_Plugin();
+
+add_action('plugins_loaded', function() {
+    if (!class_exists('WooCommerce') || !class_exists('WC_Payment_Gateway') || class_exists('Cardyar_WC_Gateway')) return;
+
+    class Cardyar_WC_Gateway extends WC_Payment_Gateway {
+        public function __construct() {
+            $this->id='cardyar';
+            $this->method_title='کارت‌به‌کارت';
+            $this->method_description='ثبت سفارش و دریافت رسید کارت‌به‌کارت با کارت‌یار.';
+            $this->has_fields=false;
+            $this->supports=['products'];
+            $this->title='کارت‌به‌کارت';
+            $this->description='پس از ثبت سفارش، اطلاعات کارت و فرم بارگذاری رسید نمایش داده می‌شود.';
+            $this->enabled='yes';
+        }
+        public function process_payment($order_id) {
+            $order=wc_get_order($order_id);
+            if(!$order) return ['result'=>'failure'];
+            $order->update_status('on-hold','در انتظار دریافت/بررسی رسید کارت‌یار');
+            wc_reduce_stock_levels($order_id);
+            WC()->cart->empty_cart();
+            return ['result'=>'success','redirect'=>$this->get_return_url($order)];
+        }
+    }
+
+    add_filter('woocommerce_payment_gateways', function($gateways){
+        $gateways[]='Cardyar_WC_Gateway';
+        return $gateways;
+    });
+
+    $plugin=$GLOBALS['cardyar_plugin_instance'] ?? null;
+    if($plugin){
+        add_action('woocommerce_thankyou_cardyar', [$plugin,'thankyou_receipt_form']);
+        add_action('woocommerce_order_details_after_order_table', [$plugin,'order_receipt_status']);
+        add_action('woocommerce_admin_order_data_after_billing_address', [$plugin,'admin_order_receipt']);
+    }
+}, 30);
