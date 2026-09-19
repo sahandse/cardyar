@@ -213,7 +213,7 @@ final class Cardyar_Plugin {
         $name=sanitize_text_field(wp_unslash($_POST['name']??''));
         $phone=preg_replace('/[^0-9+]/','',wp_unslash($_POST['phone']??''));
         $ref=sanitize_text_field(wp_unslash($_POST['reference']??''));
-        $amount=(float)wc_format_decimal(wp_unslash($_POST['amount']??''));
+        $amount=(float)str_replace([',',' '],'',sanitize_text_field(wp_unslash($_POST['amount']??'')));
         if(!$name||!$phone||!$ref||$amount<=0) wp_die('اطلاعات ناقص است');
 
         $dup=get_posts(['post_type'=>self::CPT,'post_status'=>'any','numberposts'=>1,'meta_key'=>'_cardyar_ref','meta_value'=>$ref]);
